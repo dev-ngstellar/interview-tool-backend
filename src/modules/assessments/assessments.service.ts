@@ -307,61 +307,78 @@ export class AssessmentsService {
   }
 
   /**
-   * Ensures the Round 2 English Vocabulary & Communication Assessment contains exactly 15 distinct questions.
+   * Ensures the Round 2 English Communication & Verbal Ability Assessment contains exactly 15 distinct questions.
    */
   async ensureRound2Questions(assessmentId: string): Promise<void> {
-    const existingCount = await this.prisma.question.count({
-      where: { assessmentId, isActive: true },
-    });
-
-    if (existingCount === 15) {
-      return;
-    }
-
-    this.logger.log(
-      `Synchronizing Round 2 Communication Assessment (${assessmentId}) with exactly 15 distinct questions.`,
-    );
-
     await this.prisma.$transaction(async (tx) => {
-      const existingQuestions = await tx.question.findMany({
-        where: { assessmentId },
-        select: { id: true },
-      });
-      const qIds = existingQuestions.map((q) => q.id);
-
-      if (qIds.length > 0) {
-        await tx.assessmentAnswer.deleteMany({
-          where: { questionId: { in: qIds } },
-        });
-        await tx.questionOption.deleteMany({
-          where: { questionId: { in: qIds } },
-        });
-        await tx.question.deleteMany({
-          where: { assessmentId },
-        });
-      }
-
       for (const q of ROUND_2_COMMUNICATION_QUESTIONS) {
-        await tx.question.create({
-          data: {
-            assessmentId,
-            questionText: q.questionText,
-            questionType: QuestionType.SINGLE_CHOICE,
-            marks: q.marks,
-            order: q.order,
-            options: {
-              create: q.options.map((opt) => ({
-                optionText: opt.optionText,
-                isCorrect: opt.isCorrect,
-                order: opt.order,
-              })),
-            },
-          },
+        const existing = await tx.question.findFirst({
+          where: { assessmentId, order: q.order },
+          include: { options: { orderBy: { order: 'asc' } } },
         });
+
+        if (existing) {
+          await tx.question.update({
+            where: { id: existing.id },
+            data: {
+              questionText: q.questionText,
+              questionType: QuestionType.SINGLE_CHOICE,
+              marks: q.marks,
+              isActive: true,
+            },
+          });
+
+          for (const opt of q.options) {
+            const existingOpt = existing.options.find((o) => o.order === opt.order);
+            if (existingOpt) {
+              await tx.questionOption.update({
+                where: { id: existingOpt.id },
+                data: {
+                  optionText: opt.optionText,
+                  isCorrect: opt.isCorrect,
+                },
+              });
+            } else {
+              await tx.questionOption.create({
+                data: {
+                  questionId: existing.id,
+                  optionText: opt.optionText,
+                  isCorrect: opt.isCorrect,
+                  order: opt.order,
+                },
+              });
+            }
+          }
+        } else {
+          await tx.question.create({
+            data: {
+              assessmentId,
+              questionText: q.questionText,
+              questionType: QuestionType.SINGLE_CHOICE,
+              marks: q.marks,
+              order: q.order,
+              options: {
+                create: q.options.map((opt) => ({
+                  optionText: opt.optionText,
+                  isCorrect: opt.isCorrect,
+                  order: opt.order,
+                })),
+              },
+            },
+          });
+        }
       }
+
+      await tx.question.updateMany({
+        where: {
+          assessmentId,
+          order: { gt: 15 },
+        },
+        data: { isActive: false },
+      });
     });
 
-    this.logger.log(`Successfully seeded exactly 15 questions to Round 2 assessment ${assessmentId}`);
+    this.logger.log(`Successfully verified and synchronized exactly 15 questions for Round 2 assessment ${assessmentId}`);
   }
 
   /**
@@ -2005,7 +2022,7 @@ export class AssessmentsService {
         candidateName: student.fullName,
         message: "Your Round 2 assessment has ended and been evaluated.",
         assessmentId: round2Assessment?.id,
-        title: round2Assessment?.title || "English Vocabulary & Communication",
+        title: round2Assessment?.title || "Round 2 — English Communication & Verbal Ability",
         type: "COMMUNICATION",
         durationMinutes: round2Assessment?.durationMinutes || 20,
         passPercentage: round2Assessment?.passPercentage
@@ -2045,7 +2062,7 @@ export class AssessmentsService {
       candidateName: student.fullName,
       message: welcomeMessage,
       assessmentId: round2Assessment?.id,
-      title: round2Assessment?.title || "English Vocabulary & Communication",
+      title: round2Assessment?.title || "Round 2 — English Communication & Verbal Ability",
       type: "COMMUNICATION",
       durationMinutes: round2Assessment?.durationMinutes || 20,
       passPercentage: round2Assessment?.passPercentage

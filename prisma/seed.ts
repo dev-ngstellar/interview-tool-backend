@@ -178,7 +178,7 @@ async function main() {
 
   console.log(`✅ Seeded/updated exactly 15 distinct questions in Round 1 Aptitude Assessment (1.0 mark each, 80% pass mark).`);
 
-  // 4. Seed Round 2: English Vocabulary & Communication Assessment (Requirement 6)
+  // 4. Seed Round 2: English Communication & Verbal Ability Assessment (Requirement 6)
   let round2 = await prisma.assessment.findFirst({
     where: {
       recruitmentDriveId: drive.id,
@@ -191,8 +191,8 @@ async function main() {
       data: {
         recruitmentDriveId: drive.id,
         type: AssessmentType.COMMUNICATION,
-        title: 'Round 2: English Vocabulary & Professional Communication',
-        description: 'Comprehensive evaluation of English vocabulary, grammar, reading comprehension, and business situational communication.',
+        title: 'Round 2 — English Communication & Verbal Ability',
+        description: 'Comprehensive evaluation of English communication, grammar, vocabulary, reading comprehension, and professional business correspondence.',
         durationMinutes: 20,
         passPercentage: 75.0, // Configurable threshold
         isActive: true,
@@ -203,55 +203,89 @@ async function main() {
     round2 = await prisma.assessment.update({
       where: { id: round2.id },
       data: {
+        title: 'Round 2 — English Communication & Verbal Ability',
         durationMinutes: 20,
-        passPercentage: 75.0,
+        passPercentage: round2.passPercentage ?? 75.0,
         isActive: true,
       },
     });
     console.log(`ℹ️ Round 2 Assessment updated: "${round2.title}"`);
   }
 
-  // Idempotently seed Round 2 communication questions
+  // Idempotently seed/update Round 2 communication questions in-place
   await prisma.$transaction(async (tx) => {
-    const existingQ2 = await tx.question.findMany({
-      where: { assessmentId: round2.id },
-      select: { id: true },
-    });
-    const q2Ids = existingQ2.map((q) => q.id);
-
-    if (q2Ids.length > 0) {
-      await tx.assessmentAnswer.deleteMany({
-        where: { questionId: { in: q2Ids } },
-      });
-      await tx.questionOption.deleteMany({
-        where: { questionId: { in: q2Ids } },
-      });
-      await tx.question.deleteMany({
-        where: { assessmentId: round2.id },
-      });
-    }
-
     for (const q of ROUND_2_COMMUNICATION_QUESTIONS) {
-      await tx.question.create({
-        data: {
-          assessmentId: round2.id,
-          questionText: q.questionText,
-          questionType: QuestionType.SINGLE_CHOICE,
-          marks: q.marks,
-          order: q.order,
-          options: {
-            create: q.options.map((opt) => ({
-              optionText: opt.optionText,
-              isCorrect: opt.isCorrect,
-              order: opt.order,
-            })),
-          },
-        },
+      let existingQuestion = await tx.question.findFirst({
+        where: { assessmentId: round2.id, order: q.order },
+        include: { options: { orderBy: { order: 'asc' } } },
       });
+
+      if (existingQuestion) {
+        // Update question in-place
+        await tx.question.update({
+          where: { id: existingQuestion.id },
+          data: {
+            questionText: q.questionText,
+            questionType: QuestionType.SINGLE_CHOICE,
+            marks: q.marks,
+            isActive: true,
+          },
+        });
+
+        // Update the 4 options in-place by order
+        for (const opt of q.options) {
+          const existingOpt = existingQuestion.options.find((o) => o.order === opt.order);
+          if (existingOpt) {
+            await tx.questionOption.update({
+              where: { id: existingOpt.id },
+              data: {
+                optionText: opt.optionText,
+                isCorrect: opt.isCorrect,
+              },
+            });
+          } else {
+            await tx.questionOption.create({
+              data: {
+                questionId: existingQuestion.id,
+                optionText: opt.optionText,
+                isCorrect: opt.isCorrect,
+                order: opt.order,
+              },
+            });
+          }
+        }
+      } else {
+        // Create question if not exists
+        await tx.question.create({
+          data: {
+            assessmentId: round2.id,
+            questionText: q.questionText,
+            questionType: QuestionType.SINGLE_CHOICE,
+            marks: q.marks,
+            order: q.order,
+            options: {
+              create: q.options.map((opt) => ({
+                optionText: opt.optionText,
+                isCorrect: opt.isCorrect,
+                order: opt.order,
+              })),
+            },
+          },
+        });
+      }
     }
+
+    // Ensure any stale/duplicate questions with order > 15 are deactivated
+    await tx.question.updateMany({
+      where: {
+        assessmentId: round2.id,
+        order: { gt: 15 },
+      },
+      data: { isActive: false },
+    });
   });
 
-  console.log(`✅ Seeded ${ROUND_2_COMMUNICATION_QUESTIONS.length} questions to Round 2 English Vocabulary & Communication.`);
+  console.log(`✅ Seeded/updated ${ROUND_2_COMMUNICATION_QUESTIONS.length} questions in Round 2 English Communication & Verbal Ability.`);
 
   // 5. Seed initial system Audit Log (Idempotent: update or create)
   await prisma.auditLog.create({
