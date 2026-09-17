@@ -38,9 +38,6 @@ tmp/
 temp/
 *.tmp
 
-# Local uploads / storage
-uploads/
-storage/
 
 # Local database files
 *.db
