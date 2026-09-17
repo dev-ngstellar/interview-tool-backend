@@ -12,26 +12,42 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const port = configService.get<number>("port", 4000);
   const apiPrefix = configService.get<string>("apiPrefix", "api");
-  const corsOrigin = configService.get<string>(
-  "corsOrigin",
-  "http://localhost:3000",
-  );
-
   // Global Prefix: /api
   app.setGlobalPrefix(apiPrefix);
 
-  // CORS Configuration
-  const origins = corsOrigin.includes(",")
-    ? corsOrigin.split(",").map((s) => s.trim())
-    : corsOrigin === "*"
-      ? true
-      : corsOrigin;
+  // CORS Configuration - explicit allowlist
+  const allowedOrigins = [
+    "http://localhost:3000",
+    "https://assessment.ngstellar.com",
+  ];
+
+  const configuredCorsOrigin = configService.get<string>("corsOrigin");
+  if (configuredCorsOrigin && configuredCorsOrigin !== "*") {
+    configuredCorsOrigin
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s && !allowedOrigins.includes(s))
+      .forEach((origin) => allowedOrigins.push(origin));
+  }
 
   app.enableCors({
-    origin: origins,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "Origin",
+      "X-Requested-With",
+    ],
+    optionsSuccessStatus: 204,
   });
 
   // Global Validation Pipeline
