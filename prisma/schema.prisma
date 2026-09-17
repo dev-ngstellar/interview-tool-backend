@@ -1,0 +1,414 @@
+// Prisma Schema for Marketing Executive College Drive – Recruitment App
+// Production Database Foundation with Version-Controlled Migrations
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==============================================================================
+// ENUMERATIONS
+// ==============================================================================
+
+enum Role {
+  ADMIN
+  STUDENT
+}
+
+enum DriveStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum ApplicationStatus {
+  REGISTERED
+  APTITUDE_PENDING
+  APTITUDE_IN_PROGRESS
+  APTITUDE_PASSED
+  APTITUDE_FAILED
+  ADMIN_REVIEW
+  ADMIN_APPROVED
+  COMMUNICATION_PENDING
+  COMMUNICATION_IN_PROGRESS
+  COMMUNICATION_PASSED
+  COMMUNICATION_FAILED
+  QUALIFIED
+}
+
+enum AssessmentType {
+  APTITUDE
+  COMMUNICATION
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  TEXT
+}
+
+enum AttemptStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED
+  EXPIRED
+  EVALUATED
+}
+
+enum SecurityEventType {
+  FULLSCREEN_EXIT
+  TAB_SWITCH
+  WINDOW_BLUR
+  NAVIGATION_ATTEMPT
+  COPY_ATTEMPT
+  PASTE_ATTEMPT
+  CONTEXT_MENU_ATTEMPT
+  SHORTCUT_ATTEMPT
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ==============================================================================
+// 1. USER MANAGEMENT
+// ==============================================================================
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(STUDENT)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  student        Student?
+  adminApprovals AdminApproval[]
+  auditLogs      AuditLog[]
+
+  @@map("users")
+}
+
+// ==============================================================================
+// 2. STUDENT PROFILE
+// ==============================================================================
+
+model Student {
+  id             String   @id @default(uuid())
+  studentId      String?
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  fullName       String
+  email          String
+  phone          String
+  collegeName    String?
+  course         String?
+  department     String?
+  graduationYear Int?
+  resumeUrl      String? // Storage reference / path / key (binary not stored in DB)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  applications Application[]
+
+  @@index([userId])
+  @@index([email])
+  @@index([studentId])
+  @@map("students")
+}
+
+// ==============================================================================
+// 3. RECRUITMENT DRIVE
+// ==============================================================================
+
+model RecruitmentDrive {
+  id                String      @id @default(uuid())
+  name              String
+  description       String?
+  position          String      @default("Marketing Executive")
+  collegeInfo       String? // College / eligibility information
+  registrationStart DateTime?
+  registrationEnd   DateTime?
+  status            DriveStatus @default(DRAFT)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  applications Application[]
+  assessments  Assessment[]
+
+  @@index([status])
+  @@map("recruitment_drives")
+}
+
+// ==============================================================================
+// 4. APPLICATION
+// ==============================================================================
+
+model Application {
+  id                 String            @id @default(uuid())
+  studentId          String
+  student            Student           @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  recruitmentDriveId String
+  recruitmentDrive   RecruitmentDrive  @relation(fields: [recruitmentDriveId], references: [id], onDelete: Restrict)
+  currentStatus      ApplicationStatus @default(REGISTERED)
+  appliedAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  assessmentAttempts AssessmentAttempt[]
+  adminApprovals     AdminApproval[]
+
+  @@unique([studentId, recruitmentDriveId])
+  @@index([studentId])
+  @@index([recruitmentDriveId])
+  @@index([currentStatus])
+  @@map("applications")
+}
+
+// ==============================================================================
+// 5. ASSESSMENT
+// ==============================================================================
+
+model Assessment {
+  id                 String           @id @default(uuid())
+  recruitmentDriveId String
+  recruitmentDrive   RecruitmentDrive @relation(fields: [recruitmentDriveId], references: [id], onDelete: Restrict)
+  type               AssessmentType
+  title              String
+  description        String?
+  durationMinutes    Int              @default(15) // Round 1 Aptitude: exactly 15 mins
+  passPercentage     Float // Round 1: 80%, Round 2: Admin-configurable
+  isActive           Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  questions Question[]
+  attempts  AssessmentAttempt[]
+
+  @@index([recruitmentDriveId])
+  @@index([type])
+  @@map("assessments")
+}
+
+// ==============================================================================
+// 6. QUESTION
+// ==============================================================================
+
+model Question {
+  id           String       @id @default(uuid())
+  assessmentId String
+  assessment   Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  questionText String
+  questionType QuestionType @default(SINGLE_CHOICE)
+  marks        Float        @default(1.0)
+  order        Int          @default(0)
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  options QuestionOption[]
+  answers AssessmentAnswer[]
+
+  @@index([assessmentId])
+  @@index([order])
+  @@map("questions")
+}
+
+// ==============================================================================
+// 7. QUESTION OPTION
+// ==============================================================================
+
+model QuestionOption {
+  id         String   @id @default(uuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  optionText String
+  isCorrect  Boolean  @default(false)
+  order      Int      @default(0)
+
+  answers AssessmentAnswer[]
+
+  @@index([questionId])
+  @@index([order])
+  @@map("question_options")
+}
+
+// ==============================================================================
+// 8. ASSESSMENT ATTEMPT
+// ==============================================================================
+
+model AssessmentAttempt {
+  id            String        @id @default(uuid())
+  assessmentId  String
+  assessment    Assessment    @relation(fields: [assessmentId], references: [id], onDelete: Restrict)
+  applicationId String
+  application   Application   @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  startedAt     DateTime      @default(now())
+  submittedAt   DateTime?
+  expiresAt     DateTime?
+  status        AttemptStatus @default(NOT_STARTED)
+
+  answers        AssessmentAnswer[]
+  result         AssessmentResult?
+  securityEvents AssessmentSecurityEvent[]
+
+  @@index([assessmentId])
+  @@index([applicationId])
+  @@index([status])
+  @@map("assessment_attempts")
+}
+
+// ==============================================================================
+// 9. ASSESSMENT ANSWER
+// ==============================================================================
+
+model AssessmentAnswer {
+  id               String            @id @default(uuid())
+  attemptId        String
+  attempt          AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId       String
+  question         Question          @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  selectedOptionId String?
+  selectedOption   QuestionOption?   @relation(fields: [selectedOptionId], references: [id], onDelete: SetNull)
+  textAnswer       String?
+  marksAwarded     Float?
+  isCorrect        Boolean?
+  answeredAt       DateTime          @default(now())
+
+  @@unique([attemptId, questionId])
+  @@index([attemptId])
+  @@index([questionId])
+  @@map("assessment_answers")
+}
+
+// ==============================================================================
+// 10. ASSESSMENT RESULT
+// ==============================================================================
+
+model AssessmentResult {
+  id             String            @id @default(uuid())
+  attemptId      String            @unique
+  attempt        AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  totalQuestions Int
+  correctAnswers Int
+  totalMarks     Float
+  obtainedMarks  Float
+  percentage     Float
+  passed         Boolean
+  evaluatedAt    DateTime          @default(now())
+
+  @@index([passed])
+  @@index([percentage])
+  @@map("assessment_results")
+}
+
+// ==============================================================================
+// 11. ADMIN APPROVAL (Zero-Qualified Round 1 Override with Audit Record)
+// ==============================================================================
+
+model AdminApproval {
+  id             String            @id @default(uuid())
+  applicationId  String
+  application    Application       @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  adminUserId    String
+  adminUser      User              @relation(fields: [adminUserId], references: [id], onDelete: Restrict)
+  previousStatus ApplicationStatus
+  newStatus      ApplicationStatus
+  reason         String
+  remarks        String?
+  approvedAt     DateTime          @default(now())
+
+  @@index([applicationId])
+  @@index([adminUserId])
+  @@index([approvedAt])
+  @@map("admin_approvals")
+}
+
+// ==============================================================================
+// 12. AUDIT LOG (Immutable Administrative & Security Trail)
+// ==============================================================================
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  oldValue   Json?
+  newValue   Json?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ==============================================================================
+// 13. EMAIL LOG (Notification Delivery Tracking)
+// ==============================================================================
+
+model EmailLog {
+  id           String      @id @default(uuid())
+  recipient    String
+  subject      String
+  template     String?
+  status       EmailStatus @default(PENDING)
+  sentAt       DateTime?
+  errorMessage String?
+  createdAt    DateTime    @default(now())
+
+  @@index([recipient])
+  @@index([status])
+  @@index([createdAt])
+  @@map("email_logs")
+}
+
+// ==============================================================================
+// 14. STUDENT OTP VERIFICATION
+// ==============================================================================
+
+model StudentOtp {
+  id          String   @id @default(uuid())
+  email       String
+  otpHash     String
+  details     Json?
+  attempts    Int      @default(0)
+  resendCount Int      @default(0)
+  lastSentAt  DateTime @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([email])
+  @@map("student_otps")
+}
+
+// ==============================================================================
+// 15. ASSESSMENT SECURITY EVENT (Browser Anti-Cheating & Integrity Audit)
+// ==============================================================================
+
+model AssessmentSecurityEvent {
+  id              String            @id @default(uuid())
+  attemptId       String
+  attempt         AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  eventType       SecurityEventType
+  violationNumber Int               @default(0)
+  metadata        Json?
+  createdAt       DateTime          @default(now())
+
+  @@index([attemptId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("assessment_security_events")
+}
+
