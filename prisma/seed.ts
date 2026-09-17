@@ -287,7 +287,46 @@ async function main() {
 
   console.log(`✅ Seeded/updated ${ROUND_2_COMMUNICATION_QUESTIONS.length} questions in Round 2 English Communication & Verbal Ability.`);
 
-  // 5. Seed initial system Audit Log (Idempotent: update or create)
+  // 5. Seed sample development student (Idempotent with valid unique studentId: 112)
+  const sampleStudentEmail = 'student@example.test';
+  let sampleUser = await prisma.user.findUnique({
+    where: { email: sampleStudentEmail },
+    include: { student: true },
+  });
+
+  if (!sampleUser) {
+    const studentHashedPassword = await bcrypt.hash('StudentDevSecret2026!', 10);
+    sampleUser = await prisma.user.create({
+      data: {
+        email: sampleStudentEmail,
+        passwordHash: studentHashedPassword,
+        role: Role.STUDENT,
+        isActive: true,
+        student: {
+          create: {
+            studentId: '112',
+            fullName: 'Sample Student Candidate',
+            email: sampleStudentEmail,
+            phone: '9876543210',
+            collegeName: 'NG College of Engineering',
+            course: 'B.Tech',
+            department: 'Computer Science',
+            graduationYear: 2025,
+          },
+        },
+      },
+      include: { student: true },
+    });
+    console.log(`✅ Sample development student seeded: ${sampleUser.email} (Student ID: 112)`);
+  } else if (sampleUser.student && !sampleUser.student.studentId) {
+    await prisma.student.update({
+      where: { id: sampleUser.student.id },
+      data: { studentId: '112' },
+    });
+    console.log(`ℹ️ Sample development student updated with Student ID: 112`);
+  }
+
+  // 6. Seed initial system Audit Log (Idempotent: update or create)
   await prisma.auditLog.create({
     data: {
       userId: adminUser.id,

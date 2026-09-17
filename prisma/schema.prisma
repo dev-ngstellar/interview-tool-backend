@@ -103,10 +103,10 @@ model User {
 // ==============================================================================
 
 model Student {
-  id             String   @id @default(uuid())
-  studentId      String?
-  userId         String   @unique
-  user           User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  id             String        @id @default(uuid())
+  studentId      String?       @unique
+  userId         String        @unique
+  user           User          @relation(fields: [userId], references: [id], onDelete: Restrict)
   fullName       String
   email          String
   phone          String
@@ -115,14 +115,13 @@ model Student {
   department     String?
   graduationYear Int?
   resumeUrl      String? // Storage reference / path / key (binary not stored in DB)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   applications Application[]
 
   @@index([userId])
   @@index([email])
-  @@index([studentId])
   @@map("students")
 }
 
