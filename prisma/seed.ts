@@ -102,49 +102,81 @@ async function main() {
     console.log(`ℹ️ Round 1 Assessment updated: "${round1.title}"`);
   }
 
-  // Idempotently seed exactly 15 unique questions for Round 1
+  // Idempotently seed/update exactly 15 unique questions for Round 1 in-place
   await prisma.$transaction(async (tx) => {
-    // Remove stale questions for clean re-seed
-    const existingQ = await tx.question.findMany({
-      where: { assessmentId: round1.id },
-      select: { id: true },
-    });
-    const qIds = existingQ.map((q) => q.id);
-
-    if (qIds.length > 0) {
-      await tx.assessmentAnswer.deleteMany({
-        where: { questionId: { in: qIds } },
-      });
-      await tx.questionOption.deleteMany({
-        where: { questionId: { in: qIds } },
-      });
-      await tx.question.deleteMany({
-        where: { assessmentId: round1.id },
-      });
-    }
-
-    // Insert exactly 15 unique aptitude questions
+    // Upsert each of the 15 questions and their 4 options by order to preserve candidate attempt history
     for (const q of ROUND_1_APTITUDE_QUESTIONS) {
-      await tx.question.create({
-        data: {
-          assessmentId: round1.id,
-          questionText: q.questionText,
-          questionType: QuestionType.SINGLE_CHOICE,
-          marks: q.marks,
-          order: q.order,
-          options: {
-            create: q.options.map((opt) => ({
-              optionText: opt.optionText,
-              isCorrect: opt.isCorrect,
-              order: opt.order,
-            })),
-          },
-        },
+      let existingQuestion = await tx.question.findFirst({
+        where: { assessmentId: round1.id, order: q.order },
+        include: { options: { orderBy: { order: 'asc' } } },
       });
+
+      if (existingQuestion) {
+        // Update question in-place
+        await tx.question.update({
+          where: { id: existingQuestion.id },
+          data: {
+            questionText: q.questionText,
+            questionType: QuestionType.SINGLE_CHOICE,
+            marks: q.marks,
+            isActive: true,
+          },
+        });
+
+        // Update the 4 options in-place by order
+        for (const opt of q.options) {
+          const existingOpt = existingQuestion.options.find((o) => o.order === opt.order);
+          if (existingOpt) {
+            await tx.questionOption.update({
+              where: { id: existingOpt.id },
+              data: {
+                optionText: opt.optionText,
+                isCorrect: opt.isCorrect,
+              },
+            });
+          } else {
+            await tx.questionOption.create({
+              data: {
+                questionId: existingQuestion.id,
+                optionText: opt.optionText,
+                isCorrect: opt.isCorrect,
+                order: opt.order,
+              },
+            });
+          }
+        }
+      } else {
+        // Create question if not exists
+        await tx.question.create({
+          data: {
+            assessmentId: round1.id,
+            questionText: q.questionText,
+            questionType: QuestionType.SINGLE_CHOICE,
+            marks: q.marks,
+            order: q.order,
+            options: {
+              create: q.options.map((opt) => ({
+                optionText: opt.optionText,
+                isCorrect: opt.isCorrect,
+                order: opt.order,
+              })),
+            },
+          },
+        });
+      }
     }
+
+    // Ensure any stale/duplicate questions with order > 15 are deactivated
+    await tx.question.updateMany({
+      where: {
+        assessmentId: round1.id,
+        order: { gt: 15 },
+      },
+      data: { isActive: false },
+    });
   });
 
-  console.log(`✅ Seeded exactly 15 distinct questions to Round 1 Aptitude Assessment (1.0 mark each, 80% pass mark).`);
+  console.log(`✅ Seeded/updated exactly 15 distinct questions in Round 1 Aptitude Assessment (1.0 mark each, 80% pass mark).`);
 
   // 4. Seed Round 2: English Vocabulary & Communication Assessment (Requirement 6)
   let round2 = await prisma.assessment.findFirst({
